@@ -13,7 +13,7 @@
 static int ret;
 static int fd;
 
-#define BAUD 9600 //115200 for JY61 ,9600 for others
+#define BAUD 115200 //115200 for JY61 ,9600 for others
 
 int uart_open(int fd,const char *pathname)
 {
@@ -137,6 +137,125 @@ int recv_data(int fd, char* recv_buffer,int length)
 	length=read(fd,recv_buffer,length);
 	return length;
 }
+
+
+void unbloking_configuration(int  fd)
+{
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x69;
+    send_buffer[3] = 0x88;
+    send_buffer[4] = 0xB5;
+    send_data(fd, send_buffer, 5);
+}
+
+void reset_configuration(int  fd)
+{
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x00;
+    send_buffer[3] = 0x01;
+    send_buffer[4] = 0x00;
+    send_data(fd, send_buffer, 5);
+}
+
+void save_configuration(int fd)
+{
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x00;
+    send_buffer[3] = 0x00;
+    send_buffer[4] = 0x00;
+    send_data(fd, send_buffer, 5);
+}
+
+void set_return_rate(int fd)
+{
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x03;
+    send_buffer[3] = 0x0b;
+    send_buffer[4] = 0x00;
+    unbloking_configuration(fd);
+    sleep(1);
+    send_data(fd, send_buffer, 5);
+    sleep(1);
+    save_configuration(fd);
+    sleep(1);
+}
+
+void set_baund_rate(int fd)
+{
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x04;
+    send_buffer[3] = 0x06;
+    send_buffer[4] = 0x00;
+    unbloking_configuration(fd);
+    sleep(1);
+    send_data(fd, send_buffer, 5);
+    sleep(1);
+    save_configuration(fd);
+    sleep(1);
+}
+
+void set_output_data(int fd)
+{
+    const char time_flgBit = 0x01;
+    const char acc_flgBit = 0x02;
+    const char omega_flgBit = 0x04;
+    const char angle_flgBit = 0x08;
+    const char mag_flgBit = 0x10;
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x02;
+    send_buffer[3] = acc_flgBit | omega_flgBit | angle_flgBit;
+    send_buffer[4] = 0x00;
+    unbloking_configuration(fd);
+    sleep(1);
+    send_data(fd, send_buffer, 5);
+    sleep(1);
+    save_configuration(fd);
+    sleep(1);
+}
+
+void read_return_rate(int fd)
+{
+    char send_buffer[5];
+    send_buffer[0] = 0xFF;
+    send_buffer[1] = 0xAA;
+    send_buffer[2] = 0x27;
+    send_buffer[3] = 0x03; // 0x03 : return rate, 0x22 : sleep
+    send_buffer[4] = 0x00;
+    send_data(fd, send_buffer, 5);
+    // while(true)
+    // {
+    //     char r_buf[1024];
+    //     int ret;
+    //     ret = recv_data(fd,r_buf,44);
+    //     if(ret == -1)
+    //     {
+    //         printf("uart read failed!\n");
+    //         exit(EXIT_FAILURE);
+    //     }
+
+    //     if(r_buf[0] == 0x55)
+    //     {
+    //         // if(r_buf[1] == 0x54)
+    //         {
+    //             exit(1);
+    //         }
+    //     }
+    // }
+}
+
+
 float a[3],w[3],Angle[3],h[3];
 void ParseData(char chr)
 {
@@ -146,9 +265,29 @@ void ParseData(char chr)
 		unsigned char i;
 		char cTemp=0;
 		time_t now;
+        static time_t befo_time;
+        static size_t data_count = 0;
+
 		chrBuf[chrCnt++]=chr;
 		if (chrCnt<11) return;
-		for (i=0;i<10;i++) cTemp+=chrBuf[i];
+		// for (i=0;i<10;i++) cTemp+=chrBuf[i];
+
+        //debug
+        for (i=0;i<10;i++)
+        {
+            cTemp+=chrBuf[i];
+
+            // if(chrBuf[i]==0x5F)
+            // {
+            //     for(size_t i = 0; i < chrCnt; i++)
+            //     {
+            //         printf("%x, ", (unsigned char)chrBuf[i]);
+            //     }
+            //     printf("\n");
+            //     exit(1);
+            // }
+        }
+
 		if ((chrBuf[0]!=0x55)||((chrBuf[1]&0x50)!=0x50)||(cTemp!=chrBuf[10])) {printf("Error:%x %x\r\n",chrBuf[0],chrBuf[1]);memcpy(&chrBuf[0],&chrBuf[1],10);chrCnt--;return;}
 		
 		memcpy(&sData[0],&chrBuf[2],8);
@@ -157,8 +296,13 @@ void ParseData(char chr)
 				case 0x51:
 					for (i=0;i<3;i++) a[i] = (float)sData[i]/32768.0*16.0;
 					time(&now);
-					printf("\r\nT:%s a:%6.3f %6.3f %6.3f ",asctime(localtime(&now)),a[0],a[1],a[2]);
-					
+                    if(now != befo_time)
+                    {
+                        data_count = 0;
+                        befo_time = now;
+                    }
+                    data_count++;
+                    printf("\r\n(%zu)\tT:%s:a:%6.3f %6.3f %6.3f ", data_count, asctime(localtime(&now)), a[0],a[1],a[2]);					
 					break;
 				case 0x52:
 					for (i=0;i<3;i++) w[i] = (float)sData[i]/32768.0*2000.0;
@@ -182,7 +326,7 @@ int main(void)
     char r_buf[1024];
     bzero(r_buf,1024);
 
-    fd = uart_open(fd, "/dev/tty.usbserial-14140");/*串口号/dev/ttySn,USB口号/dev/ttyUSBn */ 
+    fd = uart_open(fd, "/dev/ttyUSB0");/*串口号/dev/ttySn,USB口号/dev/ttyUSBn */ 
     if(fd == -1)
     {
         printf("uart_open error\n");
@@ -195,8 +339,12 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
-	FILE *fp;
-	fp = fopen("Record.txt","w");
+    // set_baund_rate(fd);
+
+    // set_return_rate(fd);
+    // read_return_rate(fd);
+    // set_output_data(fd);
+
     while(1)
     {
         ret = recv_data(fd,r_buf,44);
